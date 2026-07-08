@@ -1,0 +1,44 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+
+model EventsBooking {
+  id                          Int      @id @default(autoincrement())
+
+  event_applicant_name        String
+  event_applicant_institution String
+  event_department            String
+  event_designation           String
+  event_organizer_name        String
+  event_organizer_phone       String
+  event_details               String
+  event_purpose               String
+
+  event_date                  DateTime
+  event_start_time            DateTime
+  event_end_time              DateTime
+
+  event_participant_count     Int
+
+  event_guest_name            String
+  event_presiding_officers    Int
+
+  event_micset                Boolean @default(false)
+  event_white_board           Boolean @default(false)
+
+  approvals                   Json?
+  officeUse                   Json?
+
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+}
