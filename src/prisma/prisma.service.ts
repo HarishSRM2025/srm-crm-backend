@@ -15,7 +15,14 @@ export class PrismaService
     }
 
     super({
-      adapter: new PrismaPg({ connectionString }),
+      adapter: new PrismaPg({
+        connectionString,
+        ssl:
+          connectionString.includes('render.com') ||
+          connectionString.includes('oregon-postgres')
+            ? { rejectUnauthorized: false }
+            : undefined,
+      }),
     });
   }
 

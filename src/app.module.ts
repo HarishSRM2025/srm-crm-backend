@@ -4,9 +4,17 @@ import { AppService } from './app.service';
 import { EventsModule } from './events/events.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { TemplateBlobUrlModule } from './template-blob-url/template-blob-url.module';
+import { InstitutesModule } from './institutes/institutes.module';
+import { DepartmentsModule } from './departments/departments.module';
 
 @Module({
-  imports: [PrismaModule, EventsModule, TemplateBlobUrlModule],
+  imports: [
+    PrismaModule,
+    EventsModule,
+    TemplateBlobUrlModule,
+    InstitutesModule,
+    DepartmentsModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })
