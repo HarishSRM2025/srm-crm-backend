@@ -3,9 +3,10 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { EventsModule } from './events/events.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { TemplateBlobUrlModule } from './template-blob-url/template-blob-url.module';
 
 @Module({
-  imports: [PrismaModule, EventsModule],
+  imports: [PrismaModule, EventsModule, TemplateBlobUrlModule],
   controllers: [AppController],
   providers: [AppService],
 })

@@ -42,3 +42,19 @@ model EventsBooking {
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
 }
+
+
+model TemplateBlobUrl{
+  id                          Int      @id @default(autoincrement())
+  template_blob_url_name String
+  template_file    String
+  template_blob_url    String
+  template_blob_url_epires_duriation Int
+  template_url_status String
+  template_password String
+  template_comment String?
+  template_activated_count Int @default(1)
+  firstViewedAt               DateTime?
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+}
