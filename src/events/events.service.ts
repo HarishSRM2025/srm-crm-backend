@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -14,21 +14,99 @@ export class EventsService {
 
   async create(createEventDto: CreateEventDto) {
     const booking = await this.prisma.eventsBooking.create({
-      data: this.toBookingData(createEventDto),
+      data: this.toBookingData(createEventDto, true),
     });
 
     return this.toRequest(booking);
   }
 
-  async findAll() {
+  async findAll(options?: {
+    userId?: number;
+    userRole?: string;
+    institutionId?: number;
+    departmentId?: number;
+  }) {
     const bookings = await this.prisma.eventsBooking.findMany({
       orderBy: { createdAt: 'desc' },
     });
 
-    return bookings.map((booking) => this.toRequest(booking));
+    const requests = bookings.map((booking) => this.toRequest(booking));
+
+    if (!options || !options.userRole) {
+      return requests;
+    }
+
+    const { userId, userRole, institutionId, departmentId } = options;
+
+    // Admin / SuperAdmin can access all requests
+    if (userRole === 'Admin' || userRole === 'SuperAdmin') {
+      return requests;
+    }
+
+    // User: can only track their own requests
+    if (userRole === 'User' || userRole === 'user') {
+      return requests.filter((r) => r.userId === userId);
+    }
+
+    // HOD: must match their department and institution AND hod status must be pending
+    if (userRole === 'HOD') {
+      if (!departmentId) return [];
+      const dept = await this.prisma.department.findUnique({
+        where: { id: departmentId },
+        include: { institute: true },
+      });
+      if (!dept) return [];
+
+      return requests.filter((r) => {
+        const matchesDept =
+          r.form.event_department?.trim().toLowerCase() === dept.department_name.trim().toLowerCase() &&
+          r.form.event_applicant_institution?.trim().toLowerCase() === dept.institute.institute_name.trim().toLowerCase();
+
+        const isHodPending = r.approvals.hod?.status === 'pending';
+
+        return matchesDept && isHodPending;
+      });
+    }
+
+    // HOI: must match their institution AND hod must be approved AND hoi must be pending
+    if (userRole === 'HOI') {
+      if (!institutionId) return [];
+      const inst = await this.prisma.institute.findUnique({
+        where: { id: institutionId },
+      });
+      if (!inst) return [];
+
+      return requests.filter((r) => {
+        const matchesInst =
+          r.form.event_applicant_institution?.trim().toLowerCase() === inst.institute_name.trim().toLowerCase();
+
+        const hodApproved = r.approvals.hod?.status === 'approved';
+        const hoiPending = r.approvals.hoi?.status === 'pending';
+
+        return matchesInst && hodApproved && hoiPending;
+      });
+    }
+
+    // Manager: hod approved AND hoi approved AND manager pending
+    if (userRole === 'Manager') {
+      return requests.filter((r) => {
+        const hodApproved = r.approvals.hod?.status === 'approved';
+        const hoiApproved = r.approvals.hoi?.status === 'approved';
+        const managerPending = r.approvals.manager?.status === 'pending';
+
+        return hodApproved && hoiApproved && managerPending;
+      });
+    }
+
+    return [];
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, userOptions?: {
+    userId: number;
+    userRole: string;
+    institutionId?: number;
+    departmentId?: number;
+  }) {
     const booking = await this.prisma.eventsBooking.findUnique({
       where: { id: this.parseId(id) },
     });
@@ -37,8 +115,60 @@ export class EventsService {
       throw new NotFoundException(`Event ${id} was not found`);
     }
 
-    return this.toRequest(booking);
+    const request = this.toRequest(booking);
+
+    if (userOptions && userOptions.userRole) {
+      const { userId, userRole, institutionId, departmentId } = userOptions;
+
+      if (userRole === 'Admin' || userRole === 'SuperAdmin') {
+        return request;
+      }
+
+      if (userRole === 'User' || userRole === 'user') {
+        if (request.userId !== userId) {
+          throw new UnauthorizedException('You do not have permission to view this request.');
+        }
+        return request;
+      }
+
+      if (userRole === 'HOD') {
+        if (!departmentId) throw new UnauthorizedException('Access denied.');
+        const dept = await this.prisma.department.findUnique({
+          where: { id: departmentId },
+          include: { institute: true },
+        });
+        if (!dept) throw new UnauthorizedException('Access denied.');
+
+        const matchesDept =
+          request.form.event_department?.trim().toLowerCase() === dept.department_name.trim().toLowerCase() &&
+          request.form.event_applicant_institution?.trim().toLowerCase() === dept.institute.institute_name.trim().toLowerCase();
+
+        if (!matchesDept) {
+          throw new UnauthorizedException('You can only access requests for your own department.');
+        }
+        return request;
+      }
+
+      if (userRole === 'HOI') {
+        if (!institutionId) throw new UnauthorizedException('Access denied.');
+        const inst = await this.prisma.institute.findUnique({
+          where: { id: institutionId },
+        });
+        if (!inst) throw new UnauthorizedException('Access denied.');
+
+        const matchesInst =
+          request.form.event_applicant_institution?.trim().toLowerCase() === inst.institute_name.trim().toLowerCase();
+
+        if (!matchesInst) {
+          throw new UnauthorizedException('You can only access requests for your own institution.');
+        }
+        return request;
+      }
+    }
+
+    return request;
   }
+
 
   async update(id: string, updateEventDto: UpdateEventDto) {
     await this.ensureExists(id);
@@ -71,34 +201,80 @@ export class EventsService {
     return `EVT-${String(id).padStart(4, '0')}`;
   }
 
-  private toBookingData(dto: CreateEventDto | UpdateEventDto) {
-    const eventDate = this.parseEventDate(dto.event_date);
-    const { start, end } = this.resolveTimes(
-      eventDate,
-      undefined,
-      dto.event_start_time,
-      dto.event_end_time,
-    );
+  private toBookingData(dto: CreateEventDto | UpdateEventDto, isCreate = false) {
+    const bookingData: any = {};
 
-    const bookingData: any = {
-      event_applicant_name: dto.event_applicant_name ?? '',
-      event_applicant_institution: dto.event_applicant_institution ?? '',
-      event_department: dto.event_department ?? '',
-      event_designation: dto.event_designation ?? '',
-      event_organizer_name: dto.event_organizer_name ?? '',
-      event_organizer_phone: dto.event_organizer_phone ?? '',
-      event_details: dto.event_details ?? '',
-      event_purpose: dto.event_purpose ?? '',
-      event_date: eventDate,
-      event_start_time: start,
-      event_end_time: end,
-      event_participant_count: this.toNumber(dto.event_participant_count),
-      event_guest_name: dto.event_guest_name ?? '',
-      event_presiding_officers: this.toNumber(dto.event_presiding_officers),
-      event_micset: this.toBoolean(dto.event_micset),
-      event_white_board: this.toBoolean(dto.event_white_board),
-    };
+    if (isCreate) {
+      bookingData.event_applicant_name = dto.event_applicant_name ?? '';
+      bookingData.event_applicant_institution = dto.event_applicant_institution ?? '';
+      bookingData.event_department = dto.event_department ?? '';
+      bookingData.event_designation = dto.event_designation ?? '';
+      bookingData.event_organizer_name = dto.event_organizer_name ?? '';
+      bookingData.event_organizer_phone = dto.event_organizer_phone ?? '';
+      bookingData.event_details = dto.event_details ?? '';
+      bookingData.event_purpose = dto.event_purpose ?? '';
+      bookingData.event_guest_name = dto.event_guest_name ?? '';
+      bookingData.event_participant_count = this.toNumber(dto.event_participant_count);
+      bookingData.event_presiding_officers = this.toNumber(dto.event_presiding_officers);
+      bookingData.event_micset = this.toBoolean(dto.event_micset);
+      bookingData.event_white_board = this.toBoolean(dto.event_white_board);
 
+      const eventDate = this.parseEventDate(dto.event_date);
+      const { start, end } = this.resolveTimes(
+        eventDate,
+        undefined,
+        dto.event_start_time,
+        dto.event_end_time,
+      );
+      bookingData.event_date = eventDate;
+      bookingData.event_start_time = start;
+      bookingData.event_end_time = end;
+    } else {
+      if (dto.event_applicant_name !== undefined) bookingData.event_applicant_name = dto.event_applicant_name;
+      if (dto.event_applicant_institution !== undefined) bookingData.event_applicant_institution = dto.event_applicant_institution;
+      if (dto.event_department !== undefined) bookingData.event_department = dto.event_department;
+      if (dto.event_designation !== undefined) bookingData.event_designation = dto.event_designation;
+      if (dto.event_organizer_name !== undefined) bookingData.event_organizer_name = dto.event_organizer_name;
+      if (dto.event_organizer_phone !== undefined) bookingData.event_organizer_phone = dto.event_organizer_phone;
+      if (dto.event_details !== undefined) bookingData.event_details = dto.event_details;
+      if (dto.event_purpose !== undefined) bookingData.event_purpose = dto.event_purpose;
+
+      if (dto.event_date !== undefined) {
+        bookingData.event_date = this.parseEventDate(dto.event_date);
+      }
+
+      if (dto.event_start_time !== undefined || dto.event_end_time !== undefined) {
+        const eventDate = dto.event_date ? this.parseEventDate(dto.event_date) : new Date();
+        const { start, end } = this.resolveTimes(
+          eventDate,
+          undefined,
+          dto.event_start_time,
+          dto.event_end_time,
+        );
+        if (dto.event_start_time !== undefined) bookingData.event_start_time = start;
+        if (dto.event_end_time !== undefined) bookingData.event_end_time = end;
+      }
+
+      if (dto.event_participant_count !== undefined) {
+        bookingData.event_participant_count = this.toNumber(dto.event_participant_count);
+      }
+      if (dto.event_guest_name !== undefined) {
+        bookingData.event_guest_name = dto.event_guest_name;
+      }
+      if (dto.event_presiding_officers !== undefined) {
+        bookingData.event_presiding_officers = this.toNumber(dto.event_presiding_officers);
+      }
+      if (dto.event_micset !== undefined) {
+        bookingData.event_micset = this.toBoolean(dto.event_micset);
+      }
+      if (dto.event_white_board !== undefined) {
+        bookingData.event_white_board = this.toBoolean(dto.event_white_board);
+      }
+    }
+
+    if (dto.userId !== undefined) {
+      bookingData.userId = dto.userId;
+    }
     if (dto.approvals !== undefined) {
       bookingData.approvals = dto.approvals;
     }
@@ -113,6 +289,7 @@ export class EventsService {
     return {
       id: this.formatId(booking.id),
       databaseId: booking.id,
+      userId: booking.userId,
       submittedOn: booking.createdAt.toISOString().slice(0, 10),
       form: {
         event_applicant_name: booking.event_applicant_name,
@@ -131,6 +308,15 @@ export class EventsService {
         event_presiding_officers: String(booking.event_presiding_officers),
         event_micset: booking.event_micset,
         event_white_board: booking.event_white_board,
+
+        // UI View compatibility keys
+        purpose: booking.event_purpose,
+        applicantName: booking.event_applicant_name,
+        dates: this.formatDate(booking.event_date),
+        institution: booking.event_applicant_institution,
+        department: booking.event_department,
+        designation: booking.event_designation,
+        session: this.sessionFromTimes(booking.event_start_time, booking.event_end_time),
       },
       approvals: booking.approvals
         ? (booking.approvals as any)

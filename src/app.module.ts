@@ -6,6 +6,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { TemplateBlobUrlModule } from './template-blob-url/template-blob-url.module';
 import { InstitutesModule } from './institutes/institutes.module';
 import { DepartmentsModule } from './departments/departments.module';
+import { UserAuthModule } from './user-auth/user-auth.module';
 
 @Module({
   imports: [
@@ -14,8 +15,10 @@ import { DepartmentsModule } from './departments/departments.module';
     TemplateBlobUrlModule,
     InstitutesModule,
     DepartmentsModule,
+    UserAuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {}
+

@@ -13,6 +13,6 @@ async function bootstrap() {
       process.env.FRONTEND_URL,
     ].filter(Boolean),
   });
-  await app.listen(process.env.PORT ?? 3002);
+  await app.listen(process.env.PORT ?? 3005);
 }
 bootstrap();

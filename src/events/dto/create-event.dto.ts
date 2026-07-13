@@ -18,4 +18,6 @@ export class CreateEventDto {
 
   approvals?: any;
   officeUse?: any;
+  userId?: number;
 }
+
