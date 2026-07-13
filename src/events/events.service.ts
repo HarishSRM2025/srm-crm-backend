@@ -40,62 +40,131 @@ export class EventsService {
 
     // Admin / SuperAdmin can access all requests
     if (userRole === 'Admin' || userRole === 'SuperAdmin') {
-      return requests;
+      return requests.map((r) => ({ ...r, category: r.userId === userId ? 'own' : 'approval_pending' }));
     }
 
     // User: can only track their own requests
     if (userRole === 'User' || userRole === 'user') {
-      return requests.filter((r) => r.userId === userId);
+      return requests
+        .filter((r) => r.userId === userId)
+        .map((r) => ({ ...r, category: 'own' }));
     }
 
-    // HOD: must match their department and institution AND hod status must be pending
+    // HOD: returns own requests + approval queue (pending & acted)
     if (userRole === 'HOD') {
-      if (!departmentId) return [];
-      const dept = await this.prisma.department.findUnique({
-        where: { id: departmentId },
-        include: { institute: true },
-      });
-      if (!dept) return [];
+      const dept = departmentId
+        ? await this.prisma.department.findUnique({
+            where: { id: departmentId },
+            include: { institute: true },
+          })
+        : null;
 
-      return requests.filter((r) => {
-        const matchesDept =
-          r.form.event_department?.trim().toLowerCase() === dept.department_name.trim().toLowerCase() &&
-          r.form.event_applicant_institution?.trim().toLowerCase() === dept.institute.institute_name.trim().toLowerCase();
+      const results: any[] = [];
+      const addedIds = new Set<string>();
 
-        const isHodPending = r.approvals.hod?.status === 'pending';
+      // Own requests
+      for (const r of requests) {
+        if (r.userId === userId) {
+          results.push({ ...r, category: 'own' });
+          addedIds.add(r.id);
+        }
+      }
 
-        return matchesDept && isHodPending;
-      });
+      // Approval queue (only if dept info is available)
+      if (dept) {
+        for (const r of requests) {
+          if (addedIds.has(r.id)) continue;
+
+          const matchesDept =
+            r.form.event_department?.trim().toLowerCase() === dept.department_name.trim().toLowerCase() &&
+            r.form.event_applicant_institution?.trim().toLowerCase() === dept.institute.institute_name.trim().toLowerCase();
+
+          if (!matchesDept) continue;
+
+          const hodStatus = r.approvals.hod?.status;
+          if (hodStatus === 'pending') {
+            results.push({ ...r, category: 'approval_pending' });
+          } else if (hodStatus === 'approved' || hodStatus === 'rejected') {
+            results.push({ ...r, category: 'approval_acted' });
+          }
+        }
+      }
+
+      return results;
     }
 
-    // HOI: must match their institution AND hod must be approved AND hoi must be pending
+    // HOI: returns own requests + approval queue (pending & acted)
     if (userRole === 'HOI') {
-      if (!institutionId) return [];
-      const inst = await this.prisma.institute.findUnique({
-        where: { id: institutionId },
-      });
-      if (!inst) return [];
+      const inst = institutionId
+        ? await this.prisma.institute.findUnique({
+            where: { id: institutionId },
+          })
+        : null;
 
-      return requests.filter((r) => {
-        const matchesInst =
-          r.form.event_applicant_institution?.trim().toLowerCase() === inst.institute_name.trim().toLowerCase();
+      const results: any[] = [];
+      const addedIds = new Set<string>();
 
-        const hodApproved = r.approvals.hod?.status === 'approved';
-        const hoiPending = r.approvals.hoi?.status === 'pending';
+      // Own requests
+      for (const r of requests) {
+        if (r.userId === userId) {
+          results.push({ ...r, category: 'own' });
+          addedIds.add(r.id);
+        }
+      }
 
-        return matchesInst && hodApproved && hoiPending;
-      });
+      // Approval queue (only if inst info is available)
+      if (inst) {
+        for (const r of requests) {
+          if (addedIds.has(r.id)) continue;
+
+          const matchesInst =
+            r.form.event_applicant_institution?.trim().toLowerCase() === inst.institute_name.trim().toLowerCase();
+
+          if (!matchesInst) continue;
+
+          const hodApproved = r.approvals.hod?.status === 'approved';
+          const hoiStatus = r.approvals.hoi?.status;
+
+          if (hodApproved && hoiStatus === 'pending') {
+            results.push({ ...r, category: 'approval_pending' });
+          } else if (hoiStatus === 'approved' || hoiStatus === 'rejected') {
+            results.push({ ...r, category: 'approval_acted' });
+          }
+        }
+      }
+
+      return results;
     }
 
-    // Manager: hod approved AND hoi approved AND manager pending
+    // Manager: returns own requests + approval queue (pending & acted)
     if (userRole === 'Manager') {
-      return requests.filter((r) => {
+      const results: any[] = [];
+      const addedIds = new Set<string>();
+
+      // Own requests
+      for (const r of requests) {
+        if (r.userId === userId) {
+          results.push({ ...r, category: 'own' });
+          addedIds.add(r.id);
+        }
+      }
+
+      // Approval queue
+      for (const r of requests) {
+        if (addedIds.has(r.id)) continue;
+
         const hodApproved = r.approvals.hod?.status === 'approved';
         const hoiApproved = r.approvals.hoi?.status === 'approved';
-        const managerPending = r.approvals.manager?.status === 'pending';
+        const managerStatus = r.approvals.manager?.status;
 
-        return hodApproved && hoiApproved && managerPending;
-      });
+        if (hodApproved && hoiApproved && managerStatus === 'pending') {
+          results.push({ ...r, category: 'approval_pending' });
+        } else if (managerStatus === 'approved' || managerStatus === 'rejected') {
+          results.push({ ...r, category: 'approval_acted' });
+        }
+      }
+
+      return results;
     }
 
     return [];
