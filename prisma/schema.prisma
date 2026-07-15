@@ -13,6 +13,7 @@ datasource db {
 
 model UserAuth {
   id              Int             @id @default(autoincrement())
+  user_name       String
   email_id        String          @unique
   password        String
   institution_id  Int?

@@ -1,4 +1,9 @@
-import { Injectable, ConflictException, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 
@@ -10,12 +15,26 @@ export class UserAuthService {
   constructor(private readonly prisma: PrismaService) {}
 
   async signup(data: {
+    user_name: string;
     email_id: string;
     password: string;
     role: string;
     institution_id?: number;
     department_id?: number;
   }) {
+    // Validate required fields
+    if (!data.user_name || !data.user_name.trim()) {
+      throw new BadRequestException('User name is required.');
+    }
+    if (!data.email_id || !data.email_id.trim()) {
+      throw new BadRequestException('Email address is required.');
+    }
+    if (!data.password || data.password.length < 6) {
+      throw new BadRequestException(
+        'Password must be at least 6 characters long.',
+      );
+    }
+
     // Validate role
     if (!VALID_ROLES.includes(data.role)) {
       throw new BadRequestException(
@@ -55,6 +74,7 @@ export class UserAuthService {
     // Create user
     const user = await this.prisma.userAuth.create({
       data: {
+        user_name: data.user_name,
         email_id: data.email_id,
         password: hashedPassword,
         role: data.role,
@@ -69,6 +89,7 @@ export class UserAuthService {
 
     // Exclude password from response
     const { password, ...result } = user;
+    void password;
     return result;
   }
 
@@ -94,7 +115,8 @@ export class UserAuthService {
       throw new UnauthorizedException('Invalid email or password.');
     }
 
-    const { password: _, ...result } = user;
+    const { password: userPassword, ...result } = user;
+    void userPassword;
     return result;
   }
 
@@ -107,6 +129,10 @@ export class UserAuthService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return users.map(({ password, ...rest }) => rest);
+    return users.map((u) => {
+      const { password, ...rest } = u;
+      void password;
+      return rest;
+    });
   }
 }

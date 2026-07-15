@@ -9,6 +9,7 @@ export class UserAuthController {
   signup(
     @Body()
     body: {
+      user_name: string;
       email_id: string;
       password: string;
       role: string;
